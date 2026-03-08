@@ -56,6 +56,101 @@ typedef struct
 
 static CFRTrainerThreadPool g_cfr_train_pool;
 
+static int cfr_worker_should_reclaim_local_bp(const CFRWorkerContext *ctx)
+{
+    uint32_t used;
+    uint32_t cap;
+    uint64_t reclaim_threshold;
+
+    if (ctx == NULL || ctx->local_bp == NULL)
+    {
+        return 0;
+    }
+
+    cap = ctx->local_bp->node_capacity;
+    used = ctx->local_bp->used_node_count;
+
+    /* Avoid churn on small overlays; reclaim only when capacity drift is clearly high. */
+    if (cap < (1u << 20))
+    {
+        return 0;
+    }
+
+    if (used < (1u << 16))
+    {
+        used = (1u << 16);
+    }
+    reclaim_threshold = (uint64_t)used * 6ULL;
+    return (uint64_t)cap > reclaim_threshold;
+}
+
+static int cfr_worker_reclaim_local_bp(CFRWorkerContext *ctx)
+{
+    if (ctx == NULL || ctx->local_bp == NULL)
+    {
+        return 0;
+    }
+    if (!cfr_worker_should_reclaim_local_bp(ctx))
+    {
+        return 1;
+    }
+
+    cfr_blueprint_release(ctx->local_bp);
+    memset(ctx->local_bp, 0, sizeof(*ctx->local_bp));
+    if (!cfr_blueprint_init(ctx->local_bp, (uint64_t)(ctx->worker_id + 1)))
+    {
+        return 0;
+    }
+    cfr_blueprint_reset_sparse(ctx->local_bp);
+
+    /* Partition scratch also grows with touched sets; drop and regrow lazily. */
+    free(ctx->merge_indices);
+    ctx->merge_indices = NULL;
+    ctx->merge_indices_capacity = 0u;
+    free(ctx->merge_offsets);
+    ctx->merge_offsets = NULL;
+    ctx->merge_offsets_capacity = 0u;
+    ctx->merge_index_count = 0u;
+    ctx->merge_shard_count = 0;
+    return 1;
+}
+
+static int cfr_reclaim_worker_blueprints_if_needed(int workers)
+{
+    int w;
+    int reclaimed;
+
+    reclaimed = 0;
+    if (workers < 1)
+    {
+        return 1;
+    }
+    if (workers > CFR_TRAIN_MAX_WORKERS)
+    {
+        workers = CFR_TRAIN_MAX_WORKERS;
+    }
+
+    for (w = 0; w < workers; ++w)
+    {
+        CFRWorkerContext *ctx;
+        ctx = &g_cfr_train_pool.workers[w];
+        if (cfr_worker_should_reclaim_local_bp(ctx))
+        {
+            if (!cfr_worker_reclaim_local_bp(ctx))
+            {
+                return 0;
+            }
+            reclaimed++;
+        }
+    }
+
+    if (reclaimed > 0)
+    {
+        fprintf(stderr, "Worker local overlay reclaim: reclaimed=%d\n", reclaimed);
+    }
+    return 1;
+}
+
 static uint64_t cfr_mix_seed(uint64_t x)
 {
     x += 0x9E3779B97F4A7C15ULL;
@@ -1747,6 +1842,10 @@ static int cfr_run_iterations_parallel(CFRBlueprint *bp, uint64_t iteration_coun
         combined_rng ^= cfr_mix_seed(g_cfr_train_pool.workers[w].local_bp->rng_state + (uint64_t)(w + 1));
     }
     bp->rng_state = combined_rng;
+    if (!cfr_reclaim_worker_blueprints_if_needed(workers))
+    {
+        return 0;
+    }
 
     return 1;
 }
