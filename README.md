@@ -121,6 +121,7 @@ build\main.exe train [options]
 - `--status-iters <N>` status print every N iterations (`0` disables)
   - Status line includes: `iter`, `hands`, `infosets`, `mem_alloc_mb`, `mem_active_mb`, `iters/sec_recent`, `iters/sec_avg`
 - `--threads <N>` parallel training workers (default: detected CPU cores)
+- `--min-threads <N>` lower bound for adaptive thread backoff (`1` by default)
 - `--parallel-mode <name>` parallel update mode: `deterministic` (worker-local delta reduce) or `sharded` (parallel shard merge)
 - `--chunk-iters <N>` max iterations per scheduling slice (default: 256)
 - `--samples-per-player <N>` traversals per player per iteration (default: 1)

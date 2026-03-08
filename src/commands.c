@@ -871,6 +871,7 @@ static int cfr_cmd_train(int argc, char **argv)
     opt.dump_every_seconds = 0;
     opt.status_every_iters = 100;
     opt.threads = cfr_detect_hw_threads();
+    opt.min_threads = 1;
     opt.parallel_mode = CFR_PARALLEL_MODE_DETERMINISTIC;
     opt.chunk_iters = 256;
     opt.samples_per_player = 1;
@@ -960,6 +961,10 @@ static int cfr_cmd_train(int argc, char **argv)
         else if (strcmp(argv[i], "--threads") == 0 && i + 1 < argc)
         {
             opt.threads = cfr_parse_i32(argv[++i]);
+        }
+        else if (strcmp(argv[i], "--min-threads") == 0 && i + 1 < argc)
+        {
+            opt.min_threads = cfr_parse_i32(argv[++i]);
         }
         else if (strcmp(argv[i], "--parallel-mode") == 0 && i + 1 < argc)
         {
@@ -1141,6 +1146,14 @@ static int cfr_cmd_train(int argc, char **argv)
     {
         opt.threads = 1;
     }
+    if (opt.min_threads < 1)
+    {
+        opt.min_threads = 1;
+    }
+    if (opt.min_threads > opt.threads)
+    {
+        opt.min_threads = opt.threads;
+    }
     if (opt.parallel_mode != CFR_PARALLEL_MODE_DETERMINISTIC &&
         opt.parallel_mode != CFR_PARALLEL_MODE_SHARDED)
     {
@@ -1295,8 +1308,9 @@ static int cfr_cmd_train(int argc, char **argv)
     /* Raw blueprint keeps postflop strategy out of persistent payload; finalized postflop comes from snapshots. */
     bp.omit_postflop_strategy_sum = 1;
 
-    printf("Trainer config: threads=%d mode=%s chunk=%llu samples/player=%d strategy_interval=%llu linear_discount=%s(%llu, stop_iters=%llu, stop_seconds=%llu, every_seconds=%llu, scale=%.2f) pruning=%s(start_iters=%llu, start_seconds=%llu, full_every=%llu, threshold=%.2f, p=%.2f) regret_mode=%s(floor=%d) snapshots=%llu/%dsec(start=%llus, async=%s) avg_start=%llus preflop_avg=%s(%s) warmup=%llus strict_time=%s compat=0x%08X abstraction=0x%08X\n",
+    printf("Trainer config: threads=%d min_threads=%d mode=%s chunk=%llu samples/player=%d strategy_interval=%llu linear_discount=%s(%llu, stop_iters=%llu, stop_seconds=%llu, every_seconds=%llu, scale=%.2f) pruning=%s(start_iters=%llu, start_seconds=%llu, full_every=%llu, threshold=%.2f, p=%.2f) regret_mode=%s(floor=%d) snapshots=%llu/%dsec(start=%llus, async=%s) avg_start=%llus preflop_avg=%s(%s) warmup=%llus strict_time=%s compat=0x%08X abstraction=0x%08X\n",
            opt.threads,
+           opt.min_threads,
            cfr_parallel_mode_name(opt.parallel_mode),
            (unsigned long long)opt.chunk_iters,
            opt.samples_per_player,
@@ -1421,25 +1435,51 @@ static int cfr_cmd_train(int argc, char **argv)
 
             for (;;)
             {
+                uint64_t min_chunk_for_threads;
+                uint64_t max_chunk_for_threads;
+
                 chunk_opt.threads = run_threads;
                 if (cfr_run_iterations(&bp, run_chunk_iters, &chunk_opt))
                 {
                     chunk_ok = 1;
                     break;
                 }
-                if (run_threads <= 1)
+
+                if (run_threads > 1)
                 {
-                    break;
+                    (void)cfr_train_pool_force_reclaim(run_threads);
                 }
+
+                min_chunk_for_threads = 1ULL;
+                if (opt.strict_time_phases && run_threads > 1)
+                {
+                    min_chunk_for_threads = (uint64_t)run_threads * 8ULL;
+                }
+                if (run_chunk_iters > min_chunk_for_threads)
+                {
+                    uint64_t prev_chunk;
+                    prev_chunk = run_chunk_iters;
+                    run_chunk_iters /= 2ULL;
+                    if (run_chunk_iters < min_chunk_for_threads)
+                    {
+                        run_chunk_iters = min_chunk_for_threads;
+                    }
+                    fprintf(stderr,
+                            "Parallel chunk retry: threads=%d, chunk %llu -> %llu\n",
+                            run_threads,
+                            (unsigned long long)prev_chunk,
+                            (unsigned long long)run_chunk_iters);
+                    continue;
+                }
+
+                if (run_threads > opt.min_threads)
                 {
                     int prev_threads;
-                    uint64_t max_chunk_for_threads;
-
                     prev_threads = run_threads;
                     run_threads /= 2;
-                    if (run_threads < 1)
+                    if (run_threads < opt.min_threads)
                     {
-                        run_threads = 1;
+                        run_threads = opt.min_threads;
                     }
                     max_chunk_for_threads = (uint64_t)run_threads * 256ULL;
                     if (max_chunk_for_threads < 1ULL)
@@ -1455,7 +1495,10 @@ static int cfr_cmd_train(int argc, char **argv)
                             prev_threads,
                             run_threads,
                             (unsigned long long)run_chunk_iters);
+                    continue;
                 }
+
+                break;
             }
             if (!chunk_ok)
             {
@@ -1566,7 +1609,7 @@ static int cfr_cmd_train(int argc, char **argv)
     {
         fprintf(stderr,
                 "Training aborted: parallel chunk execution failed under current resource pressure. "
-                "Reduce --threads/--chunk-iters and resume.\n");
+                "Adjust --threads/--min-threads/--chunk-iters and resume.\n");
         return 1;
     }
 

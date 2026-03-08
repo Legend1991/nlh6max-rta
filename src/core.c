@@ -410,6 +410,7 @@ typedef struct
     int dump_every_seconds;
     uint64_t status_every_iters;
     int threads;
+    int min_threads;
     int parallel_mode;
     uint64_t chunk_iters;
     int samples_per_player;

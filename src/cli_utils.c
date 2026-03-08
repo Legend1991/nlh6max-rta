@@ -168,6 +168,7 @@ static void cfr_print_usage(const char *exe)
     printf("  --no-async-checkpoint   Disable async checkpoint writer\n");
     printf("  --status-iters <N>      Status print every N iterations\n");
     printf("  --threads <N>           Worker threads for blueprint training\n");
+    printf("  --min-threads <N>       Lower bound for adaptive thread backoff (default: 1)\n");
     printf("  --parallel-mode <name>  deterministic|sharded (default: deterministic)\n");
     printf("  --chunk-iters <N>       Iteration chunk size per scheduling slice\n");
     printf("  --samples-per-player <N> Traversals per player per iteration\n");

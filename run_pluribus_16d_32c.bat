@@ -2,19 +2,22 @@
 setlocal EnableExtensions EnableDelayedExpansion
 
 rem Usage:
-rem   run_pluribus_16d_32c.bat [total_seconds] [threads]
+rem   run_pluribus_16d_32c.bat [total_seconds] [threads] [min_threads]
 rem Defaults:
 rem   total_seconds = 1860000
 rem   threads       = 12
+rem   min_threads   = 12
 rem   checkpoint_seconds = 1800
 
 set "TOTAL_SECONDS=1860000"
-set "THREADS=6"
+set "THREADS=12"
+set "MIN_THREADS=12"
 set "SLICE_SECONDS=21600"
 set "CHECKPOINT_SECONDS=900"
 
 if not "%~1"=="" set "TOTAL_SECONDS=%~1"
 if not "%~2"=="" set "THREADS=%~2"
+if not "%~3"=="" set "MIN_THREADS=%~3"
 
 set "OUT=data\blueprint_pluribus_16d.bin"
 set "RUNTIME_OUT=data\blueprint_pluribus_16d_runtime.bin"
@@ -54,7 +57,7 @@ if "!ACC_SECONDS!"=="0" if exist "%OUT%" (
 
 echo ==================================================>> "%LOG_FILE%"
 echo Starting/resuming long run at %DATE% %TIME%>> "%LOG_FILE%"
-echo total_seconds=!TOTAL_SECONDS! threads=!THREADS! acc_seconds=!ACC_SECONDS!>> "%LOG_FILE%"
+echo total_seconds=!TOTAL_SECONDS! threads=!THREADS! min_threads=!MIN_THREADS! acc_seconds=!ACC_SECONDS!>> "%LOG_FILE%"
 echo output=!OUT! abstraction=!ABS! checkpoint_seconds=!CHECKPOINT_SECONDS!>> "%LOG_FILE%"
 echo ==================================================>> "%LOG_FILE%"
 
@@ -72,10 +75,10 @@ if exist "%OUT%" (
 
 for /f %%I in ('powershell -NoProfile -Command "[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()"') do set "SLICE_START=%%I"
 
-echo [%DATE% %TIME%] acc=!ACC_SECONDS! remain=!REMAIN_SECONDS! run=!RUN_SECONDS! threads=!THREADS!>> "%LOG_FILE%"
-echo [%DATE% %TIME%] acc=!ACC_SECONDS! remain=!REMAIN_SECONDS! run=!RUN_SECONDS! threads=!THREADS!
+echo [%DATE% %TIME%] acc=!ACC_SECONDS! remain=!REMAIN_SECONDS! run=!RUN_SECONDS! threads=!THREADS! min_threads=!MIN_THREADS!>> "%LOG_FILE%"
+echo [%DATE% %TIME%] acc=!ACC_SECONDS! remain=!REMAIN_SECONDS! run=!RUN_SECONDS! threads=!THREADS! min_threads=!MIN_THREADS!
 
-call build\main.exe train --pluribus-profile --threads !THREADS! --parallel-mode sharded --chunk-iters 10000 --samples-per-player 1 --seconds !RUN_SECONDS! --dump-iters 0 --dump-seconds !CHECKPOINT_SECONDS! --status-iters 20000 --snapshot-iters 0 --snapshot-seconds 12000 --snapshot-start-seconds 48000 --avg-start-seconds 48000 --warmup-seconds 48000 --discount-every-seconds 600 --snapshot-dir "%SNAP_DIR%" --abstraction "%ABS%" --out "%OUT%" --int-regret --regret-floor -310000000 --prune-threshold -300000000 --strict-time-phases --discount-stop-seconds 24000 --prune-start-seconds 12000 --no-async-checkpoint !RESUME_ARGS!
+call build\main.exe train --pluribus-profile --threads !THREADS! --min-threads !MIN_THREADS! --parallel-mode sharded --chunk-iters 10000 --samples-per-player 1 --seconds !RUN_SECONDS! --dump-iters 0 --dump-seconds !CHECKPOINT_SECONDS! --status-iters 20000 --snapshot-iters 0 --snapshot-seconds 12000 --snapshot-start-seconds 48000 --avg-start-seconds 48000 --warmup-seconds 48000 --discount-every-seconds 600 --snapshot-dir "%SNAP_DIR%" --abstraction "%ABS%" --out "%OUT%" --int-regret --regret-floor -310000000 --prune-threshold -300000000 --strict-time-phases --discount-stop-seconds 24000 --prune-start-seconds 12000 --no-async-checkpoint !RESUME_ARGS!
 if errorlevel 1 (
   echo [%DATE% %TIME%] ERROR: train command failed>> "%LOG_FILE%"
   exit /b 1
@@ -91,6 +94,7 @@ set /a ACC_SECONDS=!ACC_SECONDS!+!SLICE_ACTUAL!
   echo LAST_SLICE_SECONDS=!SLICE_ACTUAL!
   echo TOTAL_SECONDS=%TOTAL_SECONDS%
   echo THREADS=%THREADS%
+  echo MIN_THREADS=%MIN_THREADS%
 ) > "%STATE_FILE%"
 
 goto loop

@@ -151,6 +151,11 @@ static int cfr_reclaim_worker_blueprints_if_needed(int workers)
     return 1;
 }
 
+static int cfr_train_pool_force_reclaim(int workers)
+{
+    return cfr_reclaim_worker_blueprints_if_needed(workers);
+}
+
 static uint64_t cfr_mix_seed(uint64_t x)
 {
     x += 0x9E3779B97F4A7C15ULL;
@@ -1868,8 +1873,7 @@ static int cfr_run_iterations(CFRBlueprint *bp, uint64_t iteration_count, const 
             return 1;
         }
         fprintf(stderr,
-                "Parallel train chunk failed (threads=%d, mode=%d, chunk=%llu). "
-                "Aborting instead of silent single-thread fallback.\n",
+                "Parallel train chunk failed (threads=%d, mode=%d, chunk=%llu).\n",
                 opt->threads,
                 opt->parallel_mode,
                 (unsigned long long)iteration_count);
