@@ -1395,6 +1395,9 @@ static int cfr_cmd_train(int argc, char **argv)
             CFRTrainOptions chunk_opt;
             uint64_t chunk_iters;
             uint64_t elapsed_before_chunk;
+            uint64_t run_chunk_iters;
+            int run_threads;
+            int chunk_ok;
 
             elapsed_before_chunk = bp.elapsed_train_seconds;
             chunk_opt = opt;
@@ -1412,10 +1415,60 @@ static int cfr_cmd_train(int argc, char **argv)
             }
 
             chunk_iters = cfr_train_next_chunk_iters(&opt, &bp, start_iter, last_dump_iter);
-            if (!cfr_run_iterations(&bp, chunk_iters, &chunk_opt))
+            run_chunk_iters = chunk_iters;
+            run_threads = chunk_opt.threads;
+            chunk_ok = 0;
+
+            for (;;)
+            {
+                chunk_opt.threads = run_threads;
+                if (cfr_run_iterations(&bp, run_chunk_iters, &chunk_opt))
+                {
+                    chunk_ok = 1;
+                    break;
+                }
+                if (run_threads <= 1)
+                {
+                    break;
+                }
+                {
+                    int prev_threads;
+                    uint64_t max_chunk_for_threads;
+
+                    prev_threads = run_threads;
+                    run_threads /= 2;
+                    if (run_threads < 1)
+                    {
+                        run_threads = 1;
+                    }
+                    max_chunk_for_threads = (uint64_t)run_threads * 256ULL;
+                    if (max_chunk_for_threads < 1ULL)
+                    {
+                        max_chunk_for_threads = 1ULL;
+                    }
+                    if (run_chunk_iters > max_chunk_for_threads)
+                    {
+                        run_chunk_iters = max_chunk_for_threads;
+                    }
+                    fprintf(stderr,
+                            "Parallel chunk retry: threads %d -> %d, chunk=%llu\n",
+                            prev_threads,
+                            run_threads,
+                            (unsigned long long)run_chunk_iters);
+                }
+            }
+            if (!chunk_ok)
             {
                 had_train_error = 1;
                 break;
+            }
+            if (run_threads != opt.threads)
+            {
+                fprintf(stderr,
+                        "Adaptive thread backoff applied: %d -> %d for remaining training.\n",
+                        opt.threads,
+                        run_threads);
+                opt.threads = run_threads;
             }
             cfr_train_refresh_runtime_state(&bp, &opt, elapsed_at_start, start_time);
             cfr_train_apply_time_discount_events(&bp, &opt, elapsed_before_chunk, bp.elapsed_train_seconds);
